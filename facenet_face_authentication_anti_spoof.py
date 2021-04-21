@@ -23,7 +23,7 @@ pipeline = dai.Pipeline()
 
 # Define a source - color camera
 cam_rgb = pipeline.createColorCamera()
-# cam_rgb.setPreviewSize(RESIZE_HEIGHT, RESIZE_HEIGHT)
+cam_rgb.setPreviewSize(640, 400)
 cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
 cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
 cam_rgb.setInterleaved(False)
@@ -209,6 +209,18 @@ unlocked_img = cv2.imread(os.path.join('data', 'images', 'lock_open_grey.png'), 
 # Frame count
 count = 0
 
+def check_if_same(roi):
+  # Get a flattened 1D view of 2D numpy array
+  flatten_arr = np.ravel(roi)
+  # Check if all value in 2D array are equal
+  result = np.all(roi == flatten_arr[0])
+  print(result)
+
+
+def check_in_range(roi):
+  avg = np.average(roi)
+  np.where(np.logical_and(roi>=avg-100, roi<=avg+100))
+
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
@@ -243,6 +255,11 @@ with dai.Device(pipeline) as device:
       # Check if a face was detected in the frame
       if bbox:
         # If the face in the frame was authenticated
+        face_roi = depth_frame[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
+        cv2.imshow("face_roi", face_roi)
+
+        check_if_same(face_roi)
+
         if authenticated == True:
           # Display "Authenticated" status on the frame
           cv2.rectangle(frame, bbox, (0, 255, 0) , 2)
