@@ -41,15 +41,20 @@ right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 # Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
 depth = pipeline.createStereoDepth()
 depth.setConfidenceThreshold(200)
+
+# Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
+median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7 # For depth filtering
+depth.setMedianFilter(median)
+
 left.out.link(depth.left)
 right.out.link(depth.right)
 
-# Create output
+# Create color output
 xout_rgb = pipeline.createXLinkOut()
 xout_rgb.setStreamName("rgb")
 cam_rgb.preview.link(xout_rgb.input)
 
-# Create output
+# Create depth output
 xout = pipeline.createXLinkOut()
 xout.setStreamName("disparity")
 depth.disparity.link(xout.input)
@@ -237,8 +242,7 @@ with dai.Device(pipeline) as device:
       in_rgb = q_rgb.get()  # blocking call, will wait until a new data has arrived
 
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
-      # data is originally represented as a flat 1D array, it needs to be converted into HxW form
-      depth_frame = in_depth.getData().reshape((in_depth.getHeight(), in_depth.getWidth())).astype(np.uint8)
+      depth_frame = in_depth.getFrame()
       depth_frame = np.ascontiguousarray(depth_frame)
       # frame is transformed, the color map will be applied to highlight the depth info
       depth_frame = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
