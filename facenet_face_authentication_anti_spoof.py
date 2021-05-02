@@ -41,6 +41,7 @@ right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 # Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
 depth = pipeline.createStereoDepth()
 depth.setConfidenceThreshold(200)
+depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7 # For depth filtering
@@ -53,6 +54,11 @@ right.out.link(depth.right)
 xout_rgb = pipeline.createXLinkOut()
 xout_rgb.setStreamName("rgb")
 cam_rgb.preview.link(xout_rgb.input)
+
+# Create left output
+xout_left = pipeline.createXLinkOut()
+xout_left.setStreamName("left")
+depth.rectifiedLeft.link(xout_left.input)
 
 # Create depth output
 xout = pipeline.createXLinkOut()
@@ -226,6 +232,9 @@ def check_in_range(roi):
   avg = np.average(roi)
   np.where(np.logical_and(roi>=avg-100, roi<=avg+100))
 
+wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
+wlsFilter.setLambda(8000)
+wlsFilter.setSigmaColor(1.5)
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
@@ -236,14 +245,25 @@ with dai.Device(pipeline) as device:
   q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
 
   # Output queue will be used to get the disparity frames from the outputs defined above
+  q_left = device.getOutputQueue(name="left", maxSize=4, blocking=False)
+
+  # Output queue will be used to get the disparity frames from the outputs defined above
   q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
   while True:
       in_rgb = q_rgb.get()  # blocking call, will wait until a new data has arrived
 
+      in_left = q_left.get()
+      l_frame = in_left.getFrame()
+      l_frame = cv2.flip(l_frame, flipCode=1)
+      cv2.imshow("left", l_frame)
+
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
       depth_frame = in_depth.getFrame()
       depth_frame = np.ascontiguousarray(depth_frame)
+
+      cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
+      depth_frame = wlsFilter.filter(depth_frame, l_frame)
       # frame is transformed, the color map will be applied to highlight the depth info
       depth_frame = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
       # frame is ready to be shown
@@ -259,10 +279,10 @@ with dai.Device(pipeline) as device:
       # Check if a face was detected in the frame
       if bbox:
         # If the face in the frame was authenticated
-        face_roi = depth_frame[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
-        cv2.imshow("face_roi", face_roi)
+        # face_roi = depth_frame[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
+        # cv2.imshow("face_roi", face_roi)
 
-        check_if_same(face_roi)
+        # check_if_same(face_roi)
 
         if authenticated == True:
           # Display "Authenticated" status on the frame
