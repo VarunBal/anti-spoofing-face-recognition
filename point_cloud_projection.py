@@ -34,6 +34,8 @@ class PointCloudVisualizer():
             self.pcl = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, self.pinhole_camera_intrinsic)
         else:
             pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd_image, self.pinhole_camera_intrinsic)
+            # flip the orientation, so it looks upright, not upside-down
+            pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
             self.pcl.points = pcd.points
             self.pcl.colors = pcd.colors
         return self.pcl
@@ -41,8 +43,8 @@ class PointCloudVisualizer():
     def visualize_pcd(self):
         if not self.isstarted:
             self.vis.add_geometry(self.pcl)
-            origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3, origin=[0, 0, 0])
-            self.vis.add_geometry(origin)
+            # origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.3, origin=[0, 0, 0])
+            # self.vis.add_geometry(origin)
             self.isstarted = True
         else:
             self.vis.update_geometry(self.pcl)
@@ -89,7 +91,7 @@ depth.disparity.link(xout.input)
 # Create left output
 xout_left = pipeline.createXLinkOut()
 xout_left.setStreamName("left")
-depth.rectifiedRight.link(xout_left.input)
+depth.rectifiedLeft.link(xout_left.input)
 
 pcl_converter = None
 
@@ -107,6 +109,7 @@ with dai.Device(pipeline) as device:
 
       in_left = q_left.get()
       l_frame = in_left.getFrame()
+      l_frame = cv2.flip(l_frame, flipCode=1)
       cv2.imshow("left", l_frame)
 
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
