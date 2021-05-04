@@ -224,6 +224,8 @@ wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
 wlsFilter.setLambda(8000)
 wlsFilter.setSigmaColor(1.5)
 
+pcl_converter = None
+
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
   # Start pipeline
@@ -240,18 +242,21 @@ with dai.Device(pipeline) as device:
       in_right = q_right.get()
       r_frame = in_right.getFrame()
       r_frame = cv2.flip(r_frame, flipCode=1)
-      cv2.imshow("right", r_frame)
+      # cv2.imshow("right", r_frame)
 
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
       depth_frame = in_depth.getFrame()
       depth_frame = np.ascontiguousarray(depth_frame)
 
-      cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
-      depth_frame = wlsFilter.filter(depth_frame, r_frame)
+      # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
+      # depth_frame = wlsFilter.filter(depth_frame, r_frame)
       # frame is transformed, the color map will be applied to highlight the depth info
-      depth_frame = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
+      depth_frame_cmap = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
       # frame is ready to be shown
-      cv2.imshow("disparity", depth_frame)
+      cv2.imshow("disparity", depth_frame_cmap)
+
+      if pcl_converter is None:
+          pcl_converter = point_cloud_projection.PointCloudVisualizer(point_cloud_projection.M_right, 1280, 720)
 
       # # Retrieve 'bgr' (opencv format) frame
       frame = cv2.cvtColor(r_frame,cv2.COLOR_GRAY2RGB)
@@ -263,8 +268,12 @@ with dai.Device(pipeline) as device:
       # Check if a face was detected in the frame
       if bbox:
         # If the face in the frame was authenticated
-        face_roi = depth_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
-        cv2.imshow("face_roi", face_roi)
+        face_roi_d = depth_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
+        face_roi_r = r_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
+        cv2.imshow("face_roi", face_roi_d)
+
+        pcd = pcl_converter.rgbd_to_projection(face_roi_d, face_roi_r, False)
+        pcl_converter.visualize_pcd()
 
         # check_if_same(face_roi)
 

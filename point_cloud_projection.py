@@ -1,8 +1,5 @@
-import cv2
-import depthai as dai
 import numpy as np
 import open3d as o3d
-import os, json, tempfile
 
 class PointCloudVisualizer():
     def __init__(self, intrinsic_matrix, width, height):
@@ -54,81 +51,6 @@ class PointCloudVisualizer():
     def close_window(self):
         self.vis.destroy_window()
 
-pipeline = dai.Pipeline()
-
-M_left = np.array([[855.849548,    0.000000,  632.435974],
-                    [0.000000,  856.289001,  399.700226],
+M_right = np.array([[855.000122,    0.000000,  644.814514],
+                    [0.000000,  855.263794,  407.305450],
                     [0.000000,    0.000000,    1.000000]])
-
-# Define a source - two mono (grayscale) cameras
-left = pipeline.createMonoCamera()
-left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-left.setBoardSocket(dai.CameraBoardSocket.LEFT)
-
-right = pipeline.createMonoCamera()
-right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
-
-# Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
-depth = pipeline.createStereoDepth()
-depth.setConfidenceThreshold(200)
-depth.setOutputRectified(True) # The rectified streams are horizontally mirrored by default
-# depth.setOutputDepth(False)
-# depth.setExtendedDisparity(True)
-
-# Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
-median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7 # For depth filtering
-depth.setMedianFilter(median)
-
-left.out.link(depth.left)
-right.out.link(depth.right)
-
-# Create depth output
-xout = pipeline.createXLinkOut()
-xout.setStreamName("disparity")
-depth.disparity.link(xout.input)
-
-# Create left output
-xout_left = pipeline.createXLinkOut()
-xout_left.setStreamName("left")
-depth.rectifiedLeft.link(xout_left.input)
-
-pcl_converter = None
-
-with dai.Device(pipeline) as device:
-  # Start pipeline
-  device.startPipeline()
-
-  # Output queue will be used to get the disparity frames from the outputs defined above
-  q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
-
-  # Output queue will be used to get the disparity frames from the outputs defined above
-  q_left = device.getOutputQueue(name="left", maxSize=4, blocking=False)
-
-  while True:
-
-      in_left = q_left.get()
-      l_frame = in_left.getFrame()
-      l_frame = cv2.flip(l_frame, flipCode=1)
-      cv2.imshow("left", l_frame)
-
-      in_depth = q.get()  # blocking call, will wait until a new data has arrived
-      # data is originally represented as a flat 1D array, it needs to be converted into HxW form
-      depth_frame = in_depth.getFrame().astype(np.uint8)
-      # print(depth_frame)
-      depth_frame = np.ascontiguousarray(depth_frame)
-      # frame is transformed, the color map will be applied to highlight the depth info
-      # depth_frame = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
-      # flip frame (for testing)
-      # depth_frame = cv2.rotate(depth_frame, cv2.ROTATE_180)
-      # frame is ready to be shown
-      cv2.imshow("disparity", depth_frame)# Capture the key pressed
-      if pcl_converter is None:
-          pcl_converter = PointCloudVisualizer(M_left, 1280, 720)
-      pcd = pcl_converter.rgbd_to_projection(depth_frame, l_frame, False)
-      pcl_converter.visualize_pcd()
-      key_pressed = cv2.waitKey(1) & 0xff
-
-      # Stop the program if q was pressed
-      if key_pressed == ord('q'):
-        break
