@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import depthai as dai
 import os
+import point_cloud_projection
 
 # Create a facenet object
 facenet = FaceNet()
@@ -279,8 +280,8 @@ with dai.Device(pipeline) as device:
       # Check if a face was detected in the frame
       if bbox:
         # If the face in the frame was authenticated
-        # face_roi = depth_frame[bbox[1]:bbox[1]+bbox[3], bbox[0]:bbox[0]+bbox[2]]
-        # cv2.imshow("face_roi", face_roi)
+        face_roi = depth_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
+        cv2.imshow("face_roi", face_roi)
 
         # check_if_same(face_roi)
 
