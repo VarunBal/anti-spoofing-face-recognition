@@ -22,14 +22,6 @@ RESIZE_HEIGHT = 360
 # Start defining a pipeline
 pipeline = dai.Pipeline()
 
-# Define a source - color camera
-cam_rgb = pipeline.createColorCamera()
-cam_rgb.setPreviewSize(640, 400)
-cam_rgb.setBoardSocket(dai.CameraBoardSocket.RGB)
-cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-cam_rgb.setInterleaved(False)
-cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.RGB)
-
 # Define a source - two mono (grayscale) cameras
 left = pipeline.createMonoCamera()
 left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
@@ -50,11 +42,6 @@ depth.setMedianFilter(median)
 
 left.out.link(depth.left)
 right.out.link(depth.right)
-
-# Create color output
-xout_rgb = pipeline.createXLinkOut()
-xout_rgb.setStreamName("rgb")
-cam_rgb.preview.link(xout_rgb.input)
 
 # Create left output
 xout_right = pipeline.createXLinkOut()
@@ -242,9 +229,6 @@ with dai.Device(pipeline) as device:
   # Start pipeline
   device.startPipeline()
 
-  # Output queue will be used to get the rgb frames from the output defined above
-  q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
-
   # Output queue will be used to get the disparity frames from the outputs defined above
   q_right = device.getOutputQueue(name="right", maxSize=4, blocking=False)
 
@@ -252,7 +236,6 @@ with dai.Device(pipeline) as device:
   q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
   while True:
-      in_rgb = q_rgb.get()  # blocking call, will wait until a new data has arrived
 
       in_right = q_right.get()
       r_frame = in_right.getFrame()
@@ -271,7 +254,7 @@ with dai.Device(pipeline) as device:
       cv2.imshow("disparity", depth_frame)
 
       # # Retrieve 'bgr' (opencv format) frame
-      frame = in_rgb.getCvFrame()
+      frame = cv2.cvtColor(r_frame,cv2.COLOR_GRAY2RGB)
 
       if (count % SKIP_FRAMES == 0):
         # Authenticate the face present in the frame
