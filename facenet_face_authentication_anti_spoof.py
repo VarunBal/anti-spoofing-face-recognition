@@ -57,9 +57,9 @@ xout_rgb.setStreamName("rgb")
 cam_rgb.preview.link(xout_rgb.input)
 
 # Create left output
-xout_left = pipeline.createXLinkOut()
-xout_left.setStreamName("left")
-depth.rectifiedLeft.link(xout_left.input)
+xout_right = pipeline.createXLinkOut()
+xout_right.setStreamName("right")
+depth.rectifiedRight.link(xout_right.input)
 
 # Create depth output
 xout = pipeline.createXLinkOut()
@@ -246,7 +246,7 @@ with dai.Device(pipeline) as device:
   q_rgb = device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
 
   # Output queue will be used to get the disparity frames from the outputs defined above
-  q_left = device.getOutputQueue(name="left", maxSize=4, blocking=False)
+  q_right = device.getOutputQueue(name="right", maxSize=4, blocking=False)
 
   # Output queue will be used to get the disparity frames from the outputs defined above
   q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
@@ -254,17 +254,17 @@ with dai.Device(pipeline) as device:
   while True:
       in_rgb = q_rgb.get()  # blocking call, will wait until a new data has arrived
 
-      in_left = q_left.get()
-      l_frame = in_left.getFrame()
-      l_frame = cv2.flip(l_frame, flipCode=1)
-      cv2.imshow("left", l_frame)
+      in_right = q_right.get()
+      r_frame = in_right.getFrame()
+      r_frame = cv2.flip(r_frame, flipCode=1)
+      cv2.imshow("right", r_frame)
 
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
       depth_frame = in_depth.getFrame()
       depth_frame = np.ascontiguousarray(depth_frame)
 
       cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
-      depth_frame = wlsFilter.filter(depth_frame, l_frame)
+      depth_frame = wlsFilter.filter(depth_frame, r_frame)
       # frame is transformed, the color map will be applied to highlight the depth info
       depth_frame = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
       # frame is ready to be shown
