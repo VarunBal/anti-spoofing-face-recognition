@@ -35,6 +35,16 @@ right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 depth = pipeline.createStereoDepth()
 depth.setConfidenceThreshold(200)
 depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
+depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
+
+# max_disparity = 95
+#
+# max_disparity *= 2 # Double the range (include if extended disparity is true)
+# depth.setExtendedDisparity(True)
+#
+# # When we get disparity to the host, we will multiply all values with the multiplier
+# # for better visualization
+# multiplier = 255 / max_disparity
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7 # For depth filtering
@@ -246,7 +256,9 @@ with dai.Device(pipeline) as device:
 
       in_depth = q.get()  # blocking call, will wait until a new data has arrived
       depth_frame = in_depth.getFrame()
+      # depth_frame = (depth_frame*multiplier).astype(np.uint8)
       depth_frame = np.ascontiguousarray(depth_frame)
+      depth_frame = cv2.bitwise_not(depth_frame)
 
       # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
       # depth_frame = wlsFilter.filter(depth_frame, r_frame)
@@ -272,7 +284,11 @@ with dai.Device(pipeline) as device:
         face_roi_r = r_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
         cv2.imshow("face_roi", face_roi_d)
 
-        pcd = pcl_converter.rgbd_to_projection(face_roi_d, face_roi_r, False)
+        face_depth = np.full_like(depth_frame, np.nan, depth_frame.dtype)
+        face_depth[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]] = face_roi_d
+        # cv2.imshow("face_depth", face_depth)
+
+        pcd = pcl_converter.rgbd_to_projection(face_depth, r_frame, False)
         pcl_converter.visualize_pcd()
 
         # check_if_same(face_roi)
