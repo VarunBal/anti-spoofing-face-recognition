@@ -7,6 +7,11 @@ import numpy as np
 import depthai as dai
 import os
 import point_cloud_projection
+from keras.models import load_model
+
+filepath = "model.22-0.98.h5"
+model_input_size = (64, 64)
+detection_model = load_model(filepath, compile = True)
 
 # Create a facenet object
 facenet = FaceNet()
@@ -230,9 +235,9 @@ def check_in_range(roi):
   avg = np.average(roi)
   np.where(np.logical_and(roi>=avg-100, roi<=avg+100))
 
-wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
-wlsFilter.setLambda(8000)
-wlsFilter.setSigmaColor(1.5)
+# wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
+# wlsFilter.setLambda(8000)
+# wlsFilter.setSigmaColor(1.5)
 
 pcl_converter = None
 
@@ -267,8 +272,8 @@ with dai.Device(pipeline) as device:
       # frame is ready to be shown
       cv2.imshow("disparity", depth_frame_cmap)
 
-      if pcl_converter is None:
-          pcl_converter = point_cloud_projection.PointCloudVisualizer(point_cloud_projection.M_right, 1280, 720)
+      # if pcl_converter is None:
+      #     pcl_converter = point_cloud_projection.PointCloudVisualizer(point_cloud_projection.M_right, 1280, 720)
 
       # # Retrieve 'bgr' (opencv format) frame
       frame = cv2.cvtColor(r_frame,cv2.COLOR_GRAY2RGB)
@@ -288,8 +293,19 @@ with dai.Device(pipeline) as device:
         face_depth[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]] = face_roi_d
         # cv2.imshow("face_depth", face_depth)
 
-        pcd = pcl_converter.rgbd_to_projection(face_depth, r_frame, False)
-        pcl_converter.visualize_pcd()
+        # pcd = pcl_converter.rgbd_to_projection(face_depth, r_frame, False)
+        # pcl_converter.visualize_pcd()
+        resized_face_roi_d = cv2.resize(face_roi_d, model_input_size)
+        resized_face_roi_d = resized_face_roi_d/255
+        resized_face_roi_d = np.expand_dims(resized_face_roi_d, axis=-1)
+        resized_face_roi_d = np.expand_dims(resized_face_roi_d, axis=0)
+        result = detection_model.predict(resized_face_roi_d)
+        if result[0][0] > .5:
+          prediction = 'spoofed'
+        else:
+          prediction = 'real'
+        # print(result)
+        print(prediction)
 
         # check_if_same(face_roi)
 
