@@ -302,24 +302,33 @@ with dai.Device(pipeline) as device:
         result = detection_model.predict(resized_face_roi_d)
         if result[0][0] > .5:
           prediction = 'spoofed'
+          is_real = False
         else:
           prediction = 'real'
+          is_real = True
         # print(result)
         print(prediction)
 
         # check_if_same(face_roi)
 
-        if authenticated == True:
-          # Display "Authenticated" status on the frame
-          cv2.rectangle(frame, bbox, (0, 255, 0) , 2)
-          cv2.putText(frame, 'Authenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-          # Display lock in unlocked position
-          overlay_symbol(frame, unlocked_img)
-        # If the face in the frame was not authenticated
-        elif authenticated == False:
+        if is_real:
+          if authenticated == True:
+            # Display "Authenticated" status on the frame
+            cv2.rectangle(frame, bbox, (0, 255, 0) , 2)
+            cv2.putText(frame, 'Authenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
+            # Display lock in unlocked position
+            overlay_symbol(frame, unlocked_img)
+          # If the face in the frame was not authenticated
+          elif authenticated == False:
+            # Display "Unauthenticated" status on the frame
+            cv2.rectangle(frame, bbox, (0, 0, 255), 2)
+            cv2.putText(frame, 'Unauthenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
+            # Display lock in locked position
+            overlay_symbol(frame, locked_img)
+        else:
           # Display "Unauthenticated" status on the frame
           cv2.rectangle(frame, bbox, (0, 0, 255), 2)
-          cv2.putText(frame, 'Unauthenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
+          cv2.putText(frame, 'Spoofed face detected.', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
           # Display lock in locked position
           overlay_symbol(frame, locked_img)
       else:
@@ -338,10 +347,12 @@ with dai.Device(pipeline) as device:
 
       # Enrol the face if e was pressed
       if key_pressed == ord('e'):
-        enroll_face([frame])
+        if is_real:
+          enroll_face([frame])
       # Delist the face if d was pressed
       elif key_pressed == ord('d'):
-        delist_face([frame])
+        if is_real:
+          delist_face([frame])
       # Stop the program if q was pressed
       elif key_pressed == ord('q'):
         break
