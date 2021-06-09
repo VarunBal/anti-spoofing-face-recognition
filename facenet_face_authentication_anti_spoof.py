@@ -8,10 +8,12 @@ import os
 from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face
 
-filepath = "model.22-0.98.h5"
+# Initial spoofed classification model
+model_file = "identify-spoof.22-0.98.h5"
 model_input_size = (64, 64)
-detection_model = load_model(filepath, compile=True)
+detection_model = load_model(model_file, compile=True)
 
+# Set the number of frames to skip
 SKIP_FRAMES = 10
 
 # Start defining a pipeline
@@ -42,7 +44,7 @@ depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
 # multiplier = 255 / max_disparity
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
-median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7 # For depth filtering
+median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
 depth.setMedianFilter(median)
 
 left.out.link(depth.left)
@@ -94,6 +96,7 @@ def overlay_symbol(frame, img, pos=(10, 100)):
 # Frame count
 count = 0
 
+# Initialize wlsFilter
 # wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
 # wlsFilter.setLambda(8000)
 # wlsFilter.setSigmaColor(1.5)
@@ -107,7 +110,7 @@ with dai.Device(pipeline) as device:
     q_right = device.getOutputQueue(name="right", maxSize=4, blocking=False)
 
     # Output queue will be used to get the disparity frames from the outputs defined above
-    q = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
+    q_depth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
     while True:
         in_right = q_right.get()
@@ -115,12 +118,13 @@ with dai.Device(pipeline) as device:
         r_frame = cv2.flip(r_frame, flipCode=1)
         # cv2.imshow("right", r_frame)
 
-        in_depth = q.get()  # blocking call, will wait until a new data has arrived
+        in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
         depth_frame = in_depth.getFrame()
         # depth_frame = (depth_frame*multiplier).astype(np.uint8)
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
 
+        # Apply wls filter
         # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
         # depth_frame = wlsFilter.filter(depth_frame, r_frame)
 
@@ -129,8 +133,8 @@ with dai.Device(pipeline) as device:
         # frame is ready to be shown
         cv2.imshow("disparity", depth_frame_cmap)
 
-        # # Retrieve 'bgr' (opencv format) frame
-        frame = cv2.cvtColor(r_frame,cv2.COLOR_GRAY2RGB)
+        # Retrieve 'bgr' (opencv format) frame from gray scale
+        frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2RGB)
 
         if (count % SKIP_FRAMES == 0):
             # Authenticate the face present in the frame
@@ -138,30 +142,30 @@ with dai.Device(pipeline) as device:
 
         # Check if a face was detected in the frame
         if bbox:
-            # If the face in the frame was authenticated
-            face_roi_d = depth_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
-            face_roi_r = r_frame[max(0, bbox[1]):bbox[1]+bbox[3], max(0, bbox[0]):bbox[0]+bbox[2]]
-            cv2.imshow("face_roi", face_roi_d)
+            # Get face roi from right and depth frames
+            face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+            face_r = r_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+            cv2.imshow("face_roi", face_d)
 
-            face_depth = np.full_like(depth_frame, np.nan, depth_frame.dtype)
-            face_depth[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]] = face_roi_d
-            # cv2.imshow("face_depth", face_depth)
+            # Preprocess face depth map for classification
+            resized_face_d = cv2.resize(face_d, model_input_size)
+            resized_face_d = resized_face_d / 255
+            resized_face_d = np.expand_dims(resized_face_d, axis=-1)
+            resized_face_d = np.expand_dims(resized_face_d, axis=0)
 
-            resized_face_roi_d = cv2.resize(face_roi_d, model_input_size)
-            resized_face_roi_d = resized_face_roi_d/255
-            resized_face_roi_d = np.expand_dims(resized_face_roi_d, axis=-1)
-            resized_face_roi_d = np.expand_dims(resized_face_roi_d, axis=0)
-            result = detection_model.predict(resized_face_roi_d)
+            # Get prediction
+            result = detection_model.predict(resized_face_d)
             if result[0][0] > .5:
-              prediction = 'spoofed'
-              is_real = False
+                prediction = 'spoofed'
+                is_real = False
             else:
-              prediction = 'real'
-              is_real = True
-            # print(result)
+                prediction = 'real'
+                is_real = True
             print(prediction)
 
+            # Check if face is real
             if is_real:
+                # Check if the face in the frame was authenticated
                 if authenticated:
                     # Display "Authenticated" status on the frame
                     cv2.rectangle(frame, bbox, (0, 255, 0) , 2)
@@ -176,7 +180,7 @@ with dai.Device(pipeline) as device:
                     # Display lock in locked position
                     overlay_symbol(frame, locked_img)
             else:
-                # Display "Unauthenticated" status on the frame
+                # Display "Spoof face detected" status on the frame
                 cv2.rectangle(frame, bbox, (0, 0, 255), 2)
                 cv2.putText(frame, 'Spoofed face detected.', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
                 # Display lock in locked position
@@ -210,4 +214,5 @@ with dai.Device(pipeline) as device:
         # Display the final frame
         cv2.imshow("Authentication Cam", frame)
 
+        # Increment frame count
         count += 1
