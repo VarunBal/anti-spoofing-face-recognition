@@ -66,7 +66,7 @@ locked_img = cv2.imread(os.path.join('data', 'images', 'lock_grey.png'), -1)
 unlocked_img = cv2.imread(os.path.join('data', 'images', 'lock_open_grey.png'), -1)
 
 
-def overlay_symbol(frame, img, pos=(10, 100)):
+def overlay_symbol(frame, img, pos=(65, 100)):
     """
     This function overlays the image of lock/unlock
     if the authentication of the input frame
@@ -113,11 +113,13 @@ with dai.Device(pipeline) as device:
     q_depth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
     while True:
+        # Get right camera frame
         in_right = q_right.get()
         r_frame = in_right.getFrame()
         r_frame = cv2.flip(r_frame, flipCode=1)
         # cv2.imshow("right", r_frame)
 
+        # Get depth frame
         in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
         depth_frame = in_depth.getFrame()
         # depth_frame = (depth_frame*multiplier).astype(np.uint8)
@@ -136,9 +138,14 @@ with dai.Device(pipeline) as device:
         # Retrieve 'bgr' (opencv format) frame from gray scale
         frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2RGB)
 
-        if (count % SKIP_FRAMES == 0):
+        if count % SKIP_FRAMES == 0:
             # Authenticate the face present in the frame
             authenticated, bbox = authenticate_face(frame)
+
+        # Set default status
+        status_color = (0, 0, 255)
+        status = 'No Face Detected.'
+        unlock = False
 
         # Check if a face was detected in the frame
         if bbox:
@@ -167,28 +174,32 @@ with dai.Device(pipeline) as device:
             if is_real:
                 # Check if the face in the frame was authenticated
                 if authenticated:
-                    # Display "Authenticated" status on the frame
-                    cv2.rectangle(frame, bbox, (0, 255, 0) , 2)
-                    cv2.putText(frame, 'Authenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0))
-                    # Display lock in unlocked position
-                    overlay_symbol(frame, unlocked_img)
-                # If the face in the frame was not authenticated
+                    # Set Status
+                    status_color = (0, 255, 0)
+                    status = 'Authenticated'
+                    unlock = True
                 else:
-                    # Display "Unauthenticated" status on the frame
-                    cv2.rectangle(frame, bbox, (0, 0, 255), 2)
-                    cv2.putText(frame, 'Unauthenticated', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
-                    # Display lock in locked position
-                    overlay_symbol(frame, locked_img)
+                    # Set Status
+                    status = 'Unauthenticated'
             else:
-                # Display "Spoof face detected" status on the frame
-                cv2.rectangle(frame, bbox, (0, 0, 255), 2)
-                cv2.putText(frame, 'Spoofed face detected.', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
-                # Display lock in locked position
-                overlay_symbol(frame, locked_img)
+                # Set Status
+                status = 'Unauthenticated'
+                # Display "Spoof detected" status on the bbox
+                cv2.putText(frame, 'Spoof Detected', (bbox[0], bbox[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
+
+        # Display bounding box
+        cv2.rectangle(frame, bbox, status_color, 2)
+
+        # Create background for showing details
+        cv2.rectangle(frame, (5, 5, 175, 150), (50, 0, 0), -1)
+
+        # Display authentication status on the frame
+        cv2.putText(frame, status, (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color)
+
+        # Display lock symbol
+        if unlock:
+            overlay_symbol(frame, unlocked_img)
         else:
-            # If no face was detected, display the same on the frame
-            cv2.putText(frame, 'No Face Detected.', (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
-            # Display the lock in locked position
             overlay_symbol(frame, locked_img)
 
         # Display instructions on the frame
