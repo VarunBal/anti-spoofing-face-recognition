@@ -227,3 +227,4 @@ with dai.Device(pipeline) as device:
 
         # Increment frame count
         count += 1
+cv2.destroyAllWindows()
