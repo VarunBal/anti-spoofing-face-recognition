@@ -9,7 +9,7 @@ from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face
 
 # Initial spoofed classification model
-model_file = "identify-spoof.22-0.98.h5"
+model_file = "identify-spoof_with_ext_wls.25-0.99.h5"
 model_input_size = (64, 64)
 detection_model = load_model(model_file, compile=True)
 
@@ -34,14 +34,14 @@ depth.setConfidenceThreshold(200)
 depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
 depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
 
-# max_disparity = 95
-#
-# max_disparity *= 2 # Double the range (include if extended disparity is true)
-# depth.setExtendedDisparity(True)
-#
-# # When we get disparity to the host, we will multiply all values with the multiplier
-# # for better visualization
-# multiplier = 255 / max_disparity
+max_disparity = 95
+
+max_disparity *= 2  # Double the range (include if extended disparity is true)
+depth.setExtendedDisparity(True)
+
+# When we get disparity to the host, we will multiply all values with the multiplier
+# for better visualization
+multiplier = 255 / max_disparity
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
@@ -97,9 +97,9 @@ def overlay_symbol(frame, img, pos=(65, 100)):
 count = 0
 
 # Initialize wlsFilter
-# wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
-# wlsFilter.setLambda(8000)
-# wlsFilter.setSigmaColor(1.5)
+wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
+wlsFilter.setLambda(8000)
+wlsFilter.setSigmaColor(1.5)
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
@@ -128,7 +128,7 @@ with dai.Device(pipeline) as device:
 
         # Apply wls filter
         # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
-        # depth_frame = wlsFilter.filter(depth_frame, r_frame)
+        depth_frame = wlsFilter.filter(depth_frame, r_frame)
 
         # frame is transformed, the color map will be applied to highlight the depth info
         depth_frame_cmap = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
