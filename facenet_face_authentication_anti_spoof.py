@@ -8,14 +8,6 @@ import os
 from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face
 
-# Initial spoofed classification model
-model_file = "identify-spoof_with_ext_wls.25-0.99.h5"
-model_input_size = (64, 64)
-detection_model = load_model(model_file, compile=True)
-
-# Set the number of frames to skip
-SKIP_FRAMES = 10
-
 # Start defining a pipeline
 pipeline = dai.Pipeline()
 
@@ -33,15 +25,7 @@ depth = pipeline.createStereoDepth()
 depth.setConfidenceThreshold(200)
 depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
 depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
-
-max_disparity = 95
-
-max_disparity *= 2  # Double the range (include if extended disparity is true)
-depth.setExtendedDisparity(True)
-
-# When we get disparity to the host, we will multiply all values with the multiplier
-# for better visualization
-multiplier = 255 / max_disparity
+depth.setExtendedDisparity(True)  # For better close range depth perception
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
@@ -92,21 +76,28 @@ def overlay_symbol(frame, img, pos=(65, 100)):
         frame[y1:y2, x1:x2, c] = (mask * img[:, :, c] +
                                   inv_mask * frame[y1:y2, x1:x2, c])
 
-
-# Frame count
-count = 0
-
 # Initialize wlsFilter
 wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
 wlsFilter.setLambda(8000)
 wlsFilter.setSigmaColor(1.5)
+
+# Initial spoofed classification model
+model_file = "identify-spoof_with_ext_wls.25-0.99.h5"
+model_input_size = (64, 64)
+detection_model = load_model(model_file, compile=True)
+
+# Frame count
+count = 0
+
+# Set the number of frames to skip
+SKIP_FRAMES = 10
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
     # Start pipeline
     device.startPipeline()
 
-    # Output queue will be used to get the disparity frames from the outputs defined above
+    # Output queue will be used to get the right camera frames from the outputs defined above
     q_right = device.getOutputQueue(name="right", maxSize=4, blocking=False)
 
     # Output queue will be used to get the disparity frames from the outputs defined above
@@ -122,7 +113,6 @@ with dai.Device(pipeline) as device:
         # Get depth frame
         in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
         depth_frame = in_depth.getFrame()
-        # depth_frame = (depth_frame*multiplier).astype(np.uint8)
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
 
