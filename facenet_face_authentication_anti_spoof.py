@@ -76,13 +76,8 @@ def overlay_symbol(frame, img, pos=(65, 100)):
         frame[y1:y2, x1:x2, c] = (mask * img[:, :, c] +
                                   inv_mask * frame[y1:y2, x1:x2, c])
 
-# Initialize wlsFilter
-wlsFilter = cv2.ximgproc.createDisparityWLSFilterGeneric(False)
-wlsFilter.setLambda(8000)
-wlsFilter.setSigmaColor(1.5)
-
 # Initial spoofed classification model
-model_file = "identify-spoof_with_ext_wls.25-0.99.h5"
+model_file = "identify-spoof_with_ext.23-1.00.h5"
 model_input_size = (64, 64)
 detection_model = load_model(model_file, compile=True)
 
@@ -115,10 +110,6 @@ with dai.Device(pipeline) as device:
         depth_frame = in_depth.getFrame()
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
-
-        # Apply wls filter
-        # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
-        depth_frame = wlsFilter.filter(depth_frame, r_frame)
 
         # frame is transformed, the color map will be applied to highlight the depth info
         depth_frame_cmap = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
