@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import depthai as dai
 import os
+import time
 from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face
 
@@ -86,6 +87,12 @@ count = 0
 
 # Set the number of frames to skip
 SKIP_FRAMES = 10
+
+# Used to record the time when we processed last frames
+prev_frame_time = 0
+
+# Used to record the time at which we processed current frames
+new_frame_time = 0
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
@@ -183,10 +190,20 @@ with dai.Device(pipeline) as device:
         else:
             overlay_symbol(frame, locked_img)
 
+        # Calculate average fps of every hundred frames
+        if count % SKIP_FRAMES == 0:
+            # Time when we finish processing last 100 frames
+            new_frame_time = time.time()
+
+            # Fps will be number of frame processed in one second
+            fps = 1 / ((new_frame_time - prev_frame_time)/SKIP_FRAMES)
+            prev_frame_time = new_frame_time
+
         # Display instructions on the frame
         cv2.putText(frame, 'Press E to Enroll Face.', (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
         cv2.putText(frame, 'Press D to Delist Face.', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
         cv2.putText(frame, 'Press Q to Quit.', (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
+        cv2.putText(frame, f'FPS: {fps:.2f}', (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255))
 
         # Capture the key pressed
         key_pressed = cv2.waitKey(1) & 0xff
