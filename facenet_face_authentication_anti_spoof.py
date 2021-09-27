@@ -190,7 +190,7 @@ with dai.Device(pipeline) as device:
         else:
             overlay_symbol(frame, locked_img)
 
-        # Calculate average fps of every hundred frames
+        # Calculate average fps
         if count % SKIP_FRAMES == 0:
             # Time when we finish processing last 100 frames
             new_frame_time = time.time()
