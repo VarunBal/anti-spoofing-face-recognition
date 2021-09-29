@@ -9,41 +9,46 @@ import time
 from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face
 
-# Start defining a pipeline
-pipeline = dai.Pipeline()
 
-# Define a source - two mono (grayscale) cameras
-left = pipeline.createMonoCamera()
-left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-left.setBoardSocket(dai.CameraBoardSocket.LEFT)
+def create_depthai_pipeline():
+    # Start defining a pipeline
+    pipeline = dai.Pipeline()
 
-right = pipeline.createMonoCamera()
-right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
-right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
+    # Define a source - two mono (grayscale) cameras
+    left = pipeline.createMonoCamera()
+    left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+    left.setBoardSocket(dai.CameraBoardSocket.LEFT)
 
-# Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
-depth = pipeline.createStereoDepth()
-depth.setConfidenceThreshold(200)
-depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
-depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
-depth.setExtendedDisparity(True)  # For better close range depth perception
+    right = pipeline.createMonoCamera()
+    right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
+    right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
-# Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
-median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
-depth.setMedianFilter(median)
+    # Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
+    depth = pipeline.createStereoDepth()
+    depth.setConfidenceThreshold(200)
+    depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
+    depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
+    depth.setExtendedDisparity(True)  # For better close range depth perception
 
-left.out.link(depth.left)
-right.out.link(depth.right)
+    # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
+    median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
+    depth.setMedianFilter(median)
 
-# Create left output
-xout_right = pipeline.createXLinkOut()
-xout_right.setStreamName("right")
-depth.rectifiedRight.link(xout_right.input)
+    left.out.link(depth.left)
+    right.out.link(depth.right)
 
-# Create depth output
-xout = pipeline.createXLinkOut()
-xout.setStreamName("disparity")
-depth.disparity.link(xout.input)
+    # Create left output
+    xout_right = pipeline.createXLinkOut()
+    xout_right.setStreamName("right")
+    depth.rectifiedRight.link(xout_right.input)
+
+    # Create depth output
+    xout = pipeline.createXLinkOut()
+    xout.setStreamName("disparity")
+    depth.disparity.link(xout.input)
+
+    return pipeline
+
 
 # Load image of a lock in locked position
 locked_img = cv2.imread(os.path.join('data', 'images', 'lock_grey.png'), -1)
@@ -78,14 +83,65 @@ def overlay_symbol(frame, img, pos=(65, 100)):
                                   inv_mask * frame[y1:y2, x1:x2, c])
 
 # Initial spoofed classification model
-model_file = "identify-spoof_with_ext.23-1.00.h5"
-model_input_size = (64, 64)
-detection_model = load_model(model_file, compile=True)
+MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
+MODEL_INPUT_SIZE = (64, 64)
+detection_model = load_model(MODEL_FILE, compile=True)
+
+
+def verify_face(depth_frame, bbox):
+    # Get face roi from right and depth frames
+    face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+    cv2.imshow("face_roi", face_d)
+
+    # Preprocess face depth map for classification
+    resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
+    resized_face_d = resized_face_d / 255
+    resized_face_d = np.expand_dims(resized_face_d, axis=-1)
+    resized_face_d = np.expand_dims(resized_face_d, axis=0)
+
+    # Get prediction
+    result = detection_model.predict(resized_face_d)
+    if result[0][0] > .5:
+        prediction = 'spoofed'
+        is_real = False
+    else:
+        prediction = 'real'
+        is_real = True
+    print(prediction)
+
+    return is_real
+
+
+def display_info(frame, bbox, status, status_color, fps):
+    # Display bounding box
+    cv2.rectangle(frame, bbox, status_color, 2)
+
+    # Create background for showing details
+    cv2.rectangle(frame, (5, 5, 175, 150), (50, 0, 0), -1)
+
+    # Display authentication status on the frame
+    cv2.putText(frame, status, (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color)
+
+    # Display lock symbol
+    if unlock:
+        overlay_symbol(frame, unlocked_img)
+    else:
+        overlay_symbol(frame, locked_img)
+
+    # Display instructions on the frame
+    cv2.putText(frame, 'Press E to Enroll Face.', (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
+    cv2.putText(frame, 'Press D to Delist Face.', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
+    cv2.putText(frame, 'Press Q to Quit.', (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
+    cv2.putText(frame, f'FPS: {fps:.2f}', (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255))
+
 
 # Frame count
-count = 0
+frame_count = 0
 
-# Set the number of frames to skip
+# Placeholder fps value
+fps = 0
+
+# Set the number of frames to skip for authentication
 SKIP_FRAMES = 10
 
 # Used to record the time when we processed last frames
@@ -93,6 +149,8 @@ prev_frame_time = 0
 
 # Used to record the time at which we processed current frames
 new_frame_time = 0
+
+pipeline = create_depthai_pipeline()
 
 # Pipeline defined, now the device is connected to
 with dai.Device(pipeline) as device:
@@ -124,9 +182,9 @@ with dai.Device(pipeline) as device:
         cv2.imshow("disparity", depth_frame_cmap)
 
         # Retrieve 'bgr' (opencv format) frame from gray scale
-        frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2RGB)
+        frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2BGR)
 
-        if count % SKIP_FRAMES == 0:
+        if frame_count % SKIP_FRAMES == 0:
             # Authenticate the face present in the frame
             authenticated, bbox = authenticate_face(frame)
 
@@ -137,28 +195,10 @@ with dai.Device(pipeline) as device:
 
         # Check if a face was detected in the frame
         if bbox:
-            # Get face roi from right and depth frames
-            face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-            face_r = r_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-            cv2.imshow("face_roi", face_d)
 
-            # Preprocess face depth map for classification
-            resized_face_d = cv2.resize(face_d, model_input_size)
-            resized_face_d = resized_face_d / 255
-            resized_face_d = np.expand_dims(resized_face_d, axis=-1)
-            resized_face_d = np.expand_dims(resized_face_d, axis=0)
+            # Check if face is real or spoofed
+            is_real = verify_face(depth_frame, bbox)
 
-            # Get prediction
-            result = detection_model.predict(resized_face_d)
-            if result[0][0] > .5:
-                prediction = 'spoofed'
-                is_real = False
-            else:
-                prediction = 'real'
-                is_real = True
-            print(prediction)
-
-            # Check if face is real
             if is_real:
                 # Check if the face in the frame was authenticated
                 if authenticated:
@@ -175,35 +215,17 @@ with dai.Device(pipeline) as device:
                 # Display "Spoof detected" status on the bbox
                 cv2.putText(frame, 'Spoof Detected', (bbox[0], bbox[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
 
-        # Display bounding box
-        cv2.rectangle(frame, bbox, status_color, 2)
-
-        # Create background for showing details
-        cv2.rectangle(frame, (5, 5, 175, 150), (50, 0, 0), -1)
-
-        # Display authentication status on the frame
-        cv2.putText(frame, status, (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color)
-
-        # Display lock symbol
-        if unlock:
-            overlay_symbol(frame, unlocked_img)
-        else:
-            overlay_symbol(frame, locked_img)
+        # Display info on frame
+        display_info(frame, bbox, status, status_color, fps)
 
         # Calculate average fps
-        if count % SKIP_FRAMES == 0:
+        if frame_count % SKIP_FRAMES == 0:
             # Time when we finish processing last 100 frames
             new_frame_time = time.time()
 
             # Fps will be number of frame processed in one second
             fps = 1 / ((new_frame_time - prev_frame_time)/SKIP_FRAMES)
             prev_frame_time = new_frame_time
-
-        # Display instructions on the frame
-        cv2.putText(frame, 'Press E to Enroll Face.', (10, 45), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
-        cv2.putText(frame, 'Press D to Delist Face.', (10, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
-        cv2.putText(frame, 'Press Q to Quit.', (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
-        cv2.putText(frame, f'FPS: {fps:.2f}', (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255))
 
         # Capture the key pressed
         key_pressed = cv2.waitKey(1) & 0xff
@@ -224,5 +246,6 @@ with dai.Device(pipeline) as device:
         cv2.imshow("Authentication Cam", frame)
 
         # Increment frame count
-        count += 1
+        frame_count += 1
+
 cv2.destroyAllWindows()
