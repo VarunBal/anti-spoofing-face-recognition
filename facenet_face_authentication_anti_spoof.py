@@ -114,16 +114,21 @@ def verify_face(depth_frame, bbox):
 
 def display_info(frame, bbox, status, status_color, fps):
     # Display bounding box
-    cv2.rectangle(frame, bbox, status_color, 2)
+    cv2.rectangle(frame, bbox, status_color[status], 2)
+
+    # If spoof detected
+    if status == 'Spoof Detected':
+        # Display "Spoof detected" status on the bbox
+        cv2.putText(frame, "Spoofed", (bbox[0], bbox[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color[status])
 
     # Create background for showing details
     cv2.rectangle(frame, (5, 5, 175, 150), (50, 0, 0), -1)
 
     # Display authentication status on the frame
-    cv2.putText(frame, status, (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color)
+    cv2.putText(frame, status, (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color[status])
 
     # Display lock symbol
-    if unlock:
+    if status == 'Authenticated':
         overlay_symbol(frame, unlocked_img)
     else:
         overlay_symbol(frame, locked_img)
@@ -150,6 +155,14 @@ prev_frame_time = 0
 # Used to record the time at which we processed current frames
 new_frame_time = 0
 
+# Set status colors
+status_color = {
+    'Authenticated': (0, 255, 0),
+    'Unauthenticated': (0, 0, 255),
+    'Spoof Detected': (0, 0, 255),
+    'No Face Detected': (0, 0, 255)
+}
+
 pipeline = create_depthai_pipeline()
 
 # Pipeline defined, now the device is connected to
@@ -168,7 +181,6 @@ with dai.Device(pipeline) as device:
         in_right = q_right.get()
         r_frame = in_right.getFrame()
         r_frame = cv2.flip(r_frame, flipCode=1)
-        # cv2.imshow("right", r_frame)
 
         # Get depth frame
         in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
@@ -188,11 +200,6 @@ with dai.Device(pipeline) as device:
             # Authenticate the face present in the frame
             authenticated, bbox = authenticate_face(frame)
 
-        # Set default status
-        status_color = (0, 0, 255)
-        status = 'No Face Detected.'
-        unlock = False
-
         # Check if a face was detected in the frame
         if bbox:
 
@@ -202,18 +209,17 @@ with dai.Device(pipeline) as device:
             if is_real:
                 # Check if the face in the frame was authenticated
                 if authenticated:
-                    # Set Status
-                    status_color = (0, 255, 0)
+                    # Authenticated
                     status = 'Authenticated'
-                    unlock = True
                 else:
-                    # Set Status
+                    # Unauthenticated
                     status = 'Unauthenticated'
             else:
-                # Set Status
-                status = 'Unauthenticated'
-                # Display "Spoof detected" status on the bbox
-                cv2.putText(frame, 'Spoof Detected', (bbox[0], bbox[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255))
+                # Spoof detected
+                status = 'Spoof Detected'
+        else:
+            # No face detected
+            status = 'No Face Detected'
 
         # Display info on frame
         display_info(frame, bbox, status, status_color, fps)
