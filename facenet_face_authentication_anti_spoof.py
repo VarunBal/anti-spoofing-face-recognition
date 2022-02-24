@@ -47,6 +47,25 @@ def create_depthai_pipeline():
     xout.setStreamName("disparity")
     depth.disparity.link(xout.input)
 
+    xin_frame = pipeline.createXLinkIn()
+    nn_out = pipeline.createXLinkOut()
+
+    xin_frame.setStreamName("inFrame")
+    nn_out.setStreamName("nn")
+
+    nn_path = "depth-classification-models/depth_classification_ipscaled_model.blob"
+    # Define sources and outputs
+    nn = pipeline.createNeuralNetwork()
+
+    # Properties
+    nn.setBlobPath(nn_path)
+    nn.setNumInferenceThreads(2)
+    nn.input.setBlocking(False)
+
+    # Linking
+    xin_frame.out.link(nn.input)
+    nn.out.link(nn_out.input)
+
     return pipeline
 
 
@@ -81,6 +100,7 @@ def overlay_symbol(frame, img, pos=(65, 100)):
         # Add the lock/unlock image to the frame
         frame[y1:y2, x1:x2, c] = (mask * img[:, :, c] +
                                   inv_mask * frame[y1:y2, x1:x2, c])
+
 
 # Initial spoofed classification model
 MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
@@ -176,6 +196,12 @@ with dai.Device(pipeline) as device:
     # Output queue will be used to get the disparity frames from the outputs defined above
     q_depth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
+    # Input queue will be used to send video frames to the device.
+    q_in = device.getInputQueue(name="inFrame")
+
+    # Output queue will be used to get nn data from the video frames.
+    q_clas = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
+
     while True:
         # Get right camera frame
         in_right = q_right.get()
@@ -204,7 +230,40 @@ with dai.Device(pipeline) as device:
         if bbox:
 
             # Check if face is real or spoofed
-            is_real = verify_face(depth_frame, bbox)
+            # Get face roi from right and depth frames
+            face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+            cv2.imshow("face_roi", face_d)
+
+            # Preprocess face depth map for classification
+            resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
+            # resized_face_d = resized_face_d / 255
+            resized_face_d = resized_face_d.astype('float16')
+
+            img = dai.ImgFrame()
+            img.setFrame(resized_face_d)
+            img.setWidth(MODEL_INPUT_SIZE[0])
+            img.setHeight(MODEL_INPUT_SIZE[1])
+            img.setType(dai.ImgFrame.Type.GRAYF16)
+
+            q_in.send(img)
+
+            inDet = q_clas.tryGet()
+
+            is_real = None
+            if inDet is not None:
+                # Get prediction
+
+                cnn_output = inDet.getLayerFp16("dense_2/Sigmoid")
+                print(cnn_output)
+                if cnn_output[0] > .5:
+                    prediction = 'spoofed'
+                    is_real = False
+                else:
+                    prediction = 'real'
+                    is_real = True
+                print(prediction)
+
+            # is_real = verify_face(depth_frame, bbox)
 
             if is_real:
                 # Check if the face in the frame was authenticated
