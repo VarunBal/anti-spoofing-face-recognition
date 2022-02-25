@@ -7,7 +7,7 @@ import depthai as dai
 import os
 import time
 from keras.models import load_model
-from face_auth import authenticate_face, enroll_face, delist_face
+from face_auth import authenticate_face, enroll_face, delist_face, authenticate_emb
 
 
 def create_depthai_pipeline():
@@ -53,7 +53,7 @@ def create_depthai_pipeline():
     xin_frame.setStreamName("inFrame")
     nn_out.setStreamName("nn")
 
-    nn_path = "depth-classification-models/depth_classification_ipscaled_model.blob"
+    nn_path = "data/depth-classification-models/depth_classification_ipscaled_model.blob"
     # Define sources and outputs
     nn = pipeline.createNeuralNetwork()
 
@@ -65,6 +65,29 @@ def create_depthai_pipeline():
     # Linking
     xin_frame.out.link(nn.input)
     nn.out.link(nn_out.input)
+
+    arcface_in_frame = pipeline.createXLinkIn()
+    arcface_in_frame.setStreamName("arc_in")
+
+    face_rec_nn = pipeline.createNeuralNetwork()
+    face_rec_nn.setBlobPath("data/face-rec-model/face-recognition-mobilefacenet-arcface_2021.2_4shave.blob")
+    arcface_in_frame.out.link(face_rec_nn.input)
+
+    arc_out = pipeline.createXLinkOut()
+    arc_out.setStreamName('arc_out')
+    face_rec_nn.out.link(arc_out.input)
+
+    det_in_frame = pipeline.createXLinkIn()
+    det_in_frame.setStreamName("det_in")
+
+    face_det_nn = pipeline.createMobileNetDetectionNetwork()
+    face_det_nn.setConfidenceThreshold(0.75)
+    face_det_nn.setBlobPath("data/face-det-model/face-detection-adas-0001.blob")
+    det_in_frame.out.link(face_det_nn.input)
+
+    det_out = pipeline.createXLinkOut()
+    det_out.setStreamName('det_out')
+    face_det_nn.out.link(det_out.input)
 
     return pipeline
 
@@ -103,33 +126,34 @@ def overlay_symbol(frame, img, pos=(65, 100)):
 
 
 # Initial spoofed classification model
-MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
+# MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
 MODEL_INPUT_SIZE = (64, 64)
-detection_model = load_model(MODEL_FILE, compile=True)
+# detection_model = load_model(MODEL_FILE, compile=True)
+DET_INPUT_SIZE = (672, 384)
+REC_INPUT_SIZE = (112, 112)
 
-
-def verify_face(depth_frame, bbox):
-    # Get face roi from right and depth frames
-    face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-    cv2.imshow("face_roi", face_d)
-
-    # Preprocess face depth map for classification
-    resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
-    resized_face_d = resized_face_d / 255
-    resized_face_d = np.expand_dims(resized_face_d, axis=-1)
-    resized_face_d = np.expand_dims(resized_face_d, axis=0)
-
-    # Get prediction
-    result = detection_model.predict(resized_face_d)
-    if result[0][0] > .5:
-        prediction = 'spoofed'
-        is_real = False
-    else:
-        prediction = 'real'
-        is_real = True
-    print(prediction)
-
-    return is_real
+# def verify_face(depth_frame, bbox):
+#     # Get face roi from right and depth frames
+#     face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+#     cv2.imshow("face_roi", face_d)
+#
+#     # Preprocess face depth map for classification
+#     resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
+#     resized_face_d = resized_face_d / 255
+#     resized_face_d = np.expand_dims(resized_face_d, axis=-1)
+#     resized_face_d = np.expand_dims(resized_face_d, axis=0)
+#
+#     # Get prediction
+#     result = detection_model.predict(resized_face_d)
+#     if result[0][0] > .5:
+#         prediction = 'spoofed'
+#         is_real = False
+#     else:
+#         prediction = 'real'
+#         is_real = True
+#     print(prediction)
+#
+#     return is_real
 
 
 def display_info(frame, bbox, status, status_color, fps):
@@ -202,6 +226,18 @@ with dai.Device(pipeline) as device:
     # Output queue will be used to get nn data from the video frames.
     q_clas = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
 
+    # Input queue will be used to send video frames to the device.
+    q_arc_in = device.getInputQueue(name="arc_in")
+
+    # Output queue will be used to get nn data from the video frames.
+    q_rec = device.getOutputQueue(name="arc_out", maxSize=4, blocking=False)
+
+    # Input queue will be used to send video frames to the device.
+    q_det_in = device.getInputQueue(name="det_in")
+
+    # Output queue will be used to get nn data from the video frames.
+    q_det = device.getOutputQueue(name="det_out", maxSize=4, blocking=False)
+
     while True:
         # Get right camera frame
         in_right = q_right.get()
@@ -224,10 +260,50 @@ with dai.Device(pipeline) as device:
 
         if frame_count % SKIP_FRAMES == 0:
             # Authenticate the face present in the frame
-            authenticated, bbox = authenticate_face(frame)
+            # _, bbox = authenticate_face(frame)
+            bbox = None
+
+            resized_frame = cv2.resize(frame, DET_INPUT_SIZE).transpose(2, 0, 1)
+
+            frame_img = dai.ImgFrame()
+            frame_img.setFrame(resized_frame)
+            frame_img.setWidth(DET_INPUT_SIZE[0])
+            frame_img.setHeight(DET_INPUT_SIZE[1])
+
+            q_det_in.send(frame_img)
+            inDet = q_det.get()
+            if inDet is not None:
+                detections = inDet.detections
+                # for detection in detections:
+                if len(detections) is not 0:
+                    detection = detections[0]
+                    # print(detection.confidence)
+                    x = int(detection.xmin*DET_INPUT_SIZE[0])
+                    y = int(detection.ymin*DET_INPUT_SIZE[1])
+                    w = int(detection.xmax*DET_INPUT_SIZE[0]-detection.xmin*DET_INPUT_SIZE[0])
+                    h = int(detection.ymax*DET_INPUT_SIZE[1]-detection.ymin*DET_INPUT_SIZE[1])
+                    bbox = (x, y, w, h)
+
+        face_embedding = None
+        authenticated = False
 
         # Check if a face was detected in the frame
         if bbox:
+
+            face = frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+            # Preprocess face for rec
+            resized_face = cv2.resize(face, REC_INPUT_SIZE)
+            face_img = dai.ImgFrame()
+            face_img.setFrame(resized_face)
+            face_img.setWidth(REC_INPUT_SIZE[0])
+            face_img.setHeight(REC_INPUT_SIZE[1])
+
+            q_arc_in.send(face_img)
+            inRec = q_rec.tryGet()
+            if inRec is not None:
+                face_embedding = inRec.getFirstLayerFp16()
+                # print(len(face_embedding))
+                authenticated = authenticate_emb(face_embedding)
 
             # Check if face is real or spoofed
             # Get face roi from right and depth frames
@@ -247,14 +323,14 @@ with dai.Device(pipeline) as device:
 
             q_in.send(img)
 
-            inDet = q_clas.tryGet()
+            inClas = q_clas.tryGet()
 
             is_real = None
-            if inDet is not None:
+            if inClas is not None:
                 # Get prediction
 
-                cnn_output = inDet.getLayerFp16("dense_2/Sigmoid")
-                print(cnn_output)
+                cnn_output = inClas.getLayerFp16("dense_2/Sigmoid")
+                # print(cnn_output)
                 if cnn_output[0] > .5:
                     prediction = 'spoofed'
                     is_real = False
@@ -298,11 +374,11 @@ with dai.Device(pipeline) as device:
         # Enrol the face if e was pressed
         if key_pressed == ord('e'):
             if is_real:
-                enroll_face([frame])
+                enroll_face([face_embedding])
         # Delist the face if d was pressed
         elif key_pressed == ord('d'):
             if is_real:
-                delist_face([frame])
+                delist_face([face_embedding])
         # Stop the program if q was pressed
         elif key_pressed == ord('q'):
             break

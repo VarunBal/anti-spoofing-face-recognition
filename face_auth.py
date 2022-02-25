@@ -47,7 +47,7 @@ def get_embeddings(images):
     return embs, bboxes
 
 
-def enroll_face(images):
+def enroll_face(embeddings):
     """
     This function finds the feature embedding
     for given images and then adds it to the
@@ -56,20 +56,20 @@ def enroll_face(images):
     face enrolment.
     """
     # Get feature embedding vector
-    embeddings, _ = get_embeddings(images)
+    # embeddings, _ = get_embeddings(images)
     for embedding in embeddings:
         # Add feature embedding to list of
         # enrolled faces
         enrolled_faces.append(embedding)
 
 
-def delist_face(images):
+def delist_face(embeddings):
     """
     This function removes a face from the list
     of enrolled faces.
     """
     # Get feature embedding vector for input images
-    embeddings, _ = get_embeddings(images)
+    # embeddings, _ = get_embeddings(images)
     global enrolled_faces
     if len(embeddings) > 0:
         for embedding in embeddings:
@@ -105,17 +105,17 @@ def authenticate_face(image):
     # If at least one face was detected
     if len(embedding) > 0:
         # Iterate over all the enrolled faces
-        for face_emb in enrolled_faces:
-            # Compute the distance between the enrolled face's
-            # embedding vector and the input image's
-            # embedding vector
-            dist = facenet.compute_distance(embedding[0], face_emb)
-            # If above distance is less the threshold
-            if dist < authentication_threshold:
-                # Set the authenatication to True
-                # meaning that the input face has been matched
-                # to the current enrolled face
-                authentication = True
+        # for face_emb in enrolled_faces:
+        #     # Compute the distance between the enrolled face's
+        #     # embedding vector and the input image's
+        #     # embedding vector
+        #     dist = facenet.compute_distance(embedding[0], face_emb)
+        #     # If above distance is less the threshold
+        #     if dist < authentication_threshold:
+        #         # Set the authenatication to True
+        #         # meaning that the input face has been matched
+        #         # to the current enrolled face
+        #         authentication = True
         if authentication:
             # If the face was authenticated,
             # return "True" (for authentication) and the
@@ -128,3 +128,39 @@ def authenticate_face(image):
             return False, bboxes[0]
     # Default or when no face was detected
     return None, None
+
+
+def authenticate_emb(embedding):
+    """
+    This function checks if a face
+    in the given image is present
+    in the list of enrolled faces or not.
+    """
+    # Set authenatication to False by default
+    authentication = False
+    # If at least one face was detected
+    if embedding is not None:
+        # Iterate over all the enrolled faces
+        for face_emb in enrolled_faces:
+            # Compute the distance between the enrolled face's
+            # embedding vector and the input image's
+            # embedding vector
+            dist = facenet.compute_distance(embedding, face_emb)
+            # If above distance is less the threshold
+            if dist < authentication_threshold:
+                # Set the authenatication to True
+                # meaning that the input face has been matched
+                # to the current enrolled face
+                authentication = True
+        if authentication:
+            # If the face was authenticated,
+            # return "True" (for authentication) and the
+            # bounding boxes around the detected face
+            return True
+        else:
+            # If the face was not authenticated,
+            # return "False" (for authentication) and the
+            # bounding boxes around the detected face
+            return False
+    # Default or when no face was detected
+    return None
