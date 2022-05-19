@@ -71,7 +71,7 @@ def create_depthai_pipeline():
 
     face_rec_nn = pipeline.createNeuralNetwork()
     face_rec_nn.setBlobPath("data/face-rec-model/face-recognition-mobilefacenet-arcface_2021.2_4shave.blob")
-    arcface_in_frame.out.link(face_rec_nn.input)
+    # arcface_in_frame.out.link(face_rec_nn.input)
 
     arc_out = pipeline.createXLinkOut()
     arc_out.setStreamName('arc_out')
@@ -83,11 +83,47 @@ def create_depthai_pipeline():
     face_det_nn = pipeline.createMobileNetDetectionNetwork()
     face_det_nn.setConfidenceThreshold(0.75)
     face_det_nn.setBlobPath("data/face-det-model/face-detection-adas-0001.blob")
-    det_in_frame.out.link(face_det_nn.input)
+    # det_in_frame.out.link(face_det_nn.input)
 
     det_out = pipeline.createXLinkOut()
     det_out.setStreamName('det_out')
     face_det_nn.out.link(det_out.input)
+
+    face_det_manip = pipeline.createImageManip()
+    # face_det_manip.initialConfig.setHorizontalFlip(True)
+    face_det_manip.initialConfig.setResize(672, 384)
+    face_det_manip.initialConfig.setKeepAspectRatio(False)
+    # face_det_manip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
+
+    # det_in_frame.out.link(face_det_manip.inputImage)
+    # depth.rectifiedRight.link(face_det_manip.inputImage)
+    face_det_manip.out.link(face_det_nn.input)
+
+    # Script node will take the output from the face detection NN as an input and set ImageManipConfig
+    # to the 'rec_manip' to crop the initial frame
+    script = pipeline.create(dai.node.Script)
+    script.setProcessor(dai.ProcessorType.LEON_CSS)
+    script.setScriptPath("script.py")
+
+    copy_manip = pipeline.createImageManip()
+    depth.rectifiedRight.link(copy_manip.inputImage)
+    # copy_manip.initialConfig.setHorizontalFlip(True)
+    copy_manip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
+    # copy_manip.setNumFramesPool(20)
+
+    copy_manip.out.link(face_det_manip.inputImage)
+    copy_manip.out.link(script.inputs['frame'])
+
+    face_det_nn.out.link(script.inputs['face_det_in'])
+    # We are only interested in timestamp, so we can sync depth frames with NN output
+    face_det_nn.passthrough.link(script.inputs['face_pass'])
+
+    face_rec_manip = pipeline.createImageManip()
+
+    script.outputs['manip_cfg'].link(face_rec_manip.inputConfig)
+    script.outputs['manip_img'].link(face_rec_manip.inputImage)
+
+    face_rec_manip.out.link(face_rec_nn.input)
 
     return pipeline
 
@@ -227,13 +263,13 @@ with dai.Device(pipeline) as device:
     q_clas = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
 
     # Input queue will be used to send video frames to the device.
-    q_arc_in = device.getInputQueue(name="arc_in")
+    # q_arc_in = device.getInputQueue(name="arc_in")
 
     # Output queue will be used to get nn data from the video frames.
     q_rec = device.getOutputQueue(name="arc_out", maxSize=4, blocking=False)
 
     # Input queue will be used to send video frames to the device.
-    q_det_in = device.getInputQueue(name="det_in")
+    # q_det_in = device.getInputQueue(name="det_in")
 
     # Output queue will be used to get nn data from the video frames.
     q_det = device.getOutputQueue(name="det_out", maxSize=4, blocking=False)
@@ -242,11 +278,12 @@ with dai.Device(pipeline) as device:
         # Get right camera frame
         in_right = q_right.get()
         r_frame = in_right.getFrame()
-        r_frame = cv2.flip(r_frame, flipCode=1)
+        # r_frame = cv2.flip(r_frame, flipCode=1)
 
         # Get depth frame
         in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
         depth_frame = in_depth.getFrame()
+        depth_frame = cv2.flip(depth_frame, flipCode=1)
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
 
@@ -263,15 +300,15 @@ with dai.Device(pipeline) as device:
             # _, bbox = authenticate_face(frame)
             bbox = None
 
-            resized_frame = cv2.resize(frame, DET_INPUT_SIZE).transpose(2, 0, 1)
+            # resized_frame = cv2.resize(frame, DET_INPUT_SIZE).transpose(2, 0, 1)
+            #
+            # frame_img = dai.ImgFrame()
+            # frame_img.setFrame(resized_frame)
+            # frame_img.setWidth(DET_INPUT_SIZE[0])
+            # frame_img.setHeight(DET_INPUT_SIZE[1])
 
-            frame_img = dai.ImgFrame()
-            frame_img.setFrame(resized_frame)
-            frame_img.setWidth(DET_INPUT_SIZE[0])
-            frame_img.setHeight(DET_INPUT_SIZE[1])
-
-            q_det_in.send(frame_img)
-            inDet = q_det.get()
+            # q_det_in.send(frame_img)
+            inDet = q_det.tryGet()
             if inDet is not None:
                 detections = inDet.detections
                 # for detection in detections:
@@ -290,15 +327,15 @@ with dai.Device(pipeline) as device:
         # Check if a face was detected in the frame
         if bbox:
 
-            face = frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-            # Preprocess face for rec
-            resized_face = cv2.resize(face, REC_INPUT_SIZE)
-            face_img = dai.ImgFrame()
-            face_img.setFrame(resized_face)
-            face_img.setWidth(REC_INPUT_SIZE[0])
-            face_img.setHeight(REC_INPUT_SIZE[1])
+            # face = frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
+            # # Preprocess face for rec
+            # resized_face = cv2.resize(face, REC_INPUT_SIZE)
+            # face_img = dai.ImgFrame()
+            # face_img.setFrame(resized_face)
+            # face_img.setWidth(REC_INPUT_SIZE[0])
+            # face_img.setHeight(REC_INPUT_SIZE[1])
 
-            q_arc_in.send(face_img)
+            # q_arc_in.send(face_img)
             inRec = q_rec.tryGet()
             if inRec is not None:
                 face_embedding = inRec.getFirstLayerFp16()
