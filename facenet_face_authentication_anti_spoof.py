@@ -116,7 +116,7 @@ def create_depthai_pipeline():
 
     face_det_nn.out.link(script.inputs['face_det_in'])
     # We are only interested in timestamp, so we can sync depth frames with NN output
-    face_det_nn.passthrough.link(script.inputs['face_pass'])
+    # face_det_nn.passthrough.link(script.inputs['face_pass'])
 
     face_rec_manip = pipeline.createImageManip()
 
