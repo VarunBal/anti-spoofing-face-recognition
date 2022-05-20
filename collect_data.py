@@ -5,13 +5,18 @@ import cv2
 import numpy as np
 import depthai as dai
 import os
-from face_auth import authenticate_face
+import blobconverter
 
 # Define directory paths
 real_face_dir = os.path.join("dataset", "real")
 os.makedirs(real_face_dir, exist_ok=True)
 spoofed_face_dir = os.path.join("dataset", "spoofed")
 os.makedirs(spoofed_face_dir, exist_ok=True)
+
+# Define Detection NN model name and input size
+DET_INPUT_SIZE = (300, 300)
+FACE_MODEL_NAME = "face-detection-retail-0004"
+ZOO_TYPE = "depthai"
 
 # Start defining a pipeline
 pipeline = dai.Pipeline()
@@ -31,6 +36,34 @@ depth.setConfidenceThreshold(200)
 depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
 depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
 depth.setExtendedDisparity(True)  # For better close range depth perception
+
+# Convert model from OMZ to blob
+if FACE_MODEL_NAME is not None:
+    blob_path = blobconverter.from_zoo(
+        name=FACE_MODEL_NAME,
+        shaves=6,
+        zoo_type=ZOO_TYPE
+    )
+
+# Define face detection NN node
+faceDetNn = pipeline.createMobileNetDetectionNetwork()
+faceDetNn.setConfidenceThreshold(0.75)
+faceDetNn.setBlobPath(blob_path)
+
+# Define face detection input config
+faceDetManip = pipeline.createImageManip()
+faceDetManip.initialConfig.setResize(DET_INPUT_SIZE[0], DET_INPUT_SIZE[1])
+faceDetManip.initialConfig.setKeepAspectRatio(False)
+faceDetManip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
+
+# Linking
+depth.rectifiedRight.link(faceDetManip.inputImage)
+faceDetManip.out.link(faceDetNn.input)
+
+# Create face detection output
+xOutDet = pipeline.createXLinkOut()
+xOutDet.setStreamName('det_out')
+faceDetNn.out.link(xOutDet.input)
 
 # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
 median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
@@ -79,11 +112,14 @@ with dai.Device(pipeline) as device:
     # Output queue will be used to get the disparity frames from the outputs defined above
     q_depth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
+    # Output queue will be used to get nn detection data from the video frames.
+    qDet = device.getOutputQueue(name="det_out", maxSize=1, blocking=False)
+
     while True:
         # Get right camera frame
         in_right = q_right.get()
         r_frame = in_right.getFrame()
-        r_frame = cv2.flip(r_frame, flipCode=1)
+        # r_frame = cv2.flip(r_frame, flipCode=1)
         # cv2.imshow("right", r_frame)
 
         # Get depth frame
@@ -91,6 +127,7 @@ with dai.Device(pipeline) as device:
         depth_frame = in_depth.getFrame()
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
+        depth_frame = cv2.flip(depth_frame, flipCode=1)
 
         # Apply wls filter
         # cv2.imshow("without wls filter", cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET))
@@ -103,10 +140,22 @@ with dai.Device(pipeline) as device:
 
         # Retrieve 'bgr' (opencv format) frame from gray scale
         frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2RGB)
+        img_h, img_w = frame.shape[0:2]
 
-        if count % SKIP_FRAMES == 0:
-            # Authenticate the face present in the frame
-            authenticated, bbox = authenticate_face(frame)
+        bbox = None
+
+        inDet = qDet.tryGet()
+        if inDet is not None:
+            detections = inDet.detections
+            # for detection in detections:
+            if len(detections) is not 0:
+                detection = detections[0]
+                # print(detection.confidence)
+                x = int(detection.xmin * img_w)
+                y = int(detection.ymin * img_h)
+                w = int(detection.xmax * img_w - detection.xmin * img_w)
+                h = int(detection.ymax * img_h - detection.ymin * img_h)
+                bbox = (x, y, w, h)
 
         # Set default status
         status_color = (0, 0, 255)
@@ -160,7 +209,7 @@ with dai.Device(pipeline) as device:
                 cv2.putText(frame, "Face not saved", (20, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
 
         # Display the final frame
-        cv2.imshow("Authentication Cam", frame)
+        cv2.imshow("Data collection Cam", frame)
 
         count += 1
 cv2.destroyAllWindows()
