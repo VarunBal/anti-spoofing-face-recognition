@@ -8,7 +8,7 @@ import os
 import time
 from keras.models import load_model
 from face_auth import authenticate_face, enroll_face, delist_face, authenticate_emb
-
+import blobconverter
 
 def create_depthai_pipeline():
     # Start defining a pipeline
@@ -69,8 +69,16 @@ def create_depthai_pipeline():
     arcface_in_frame = pipeline.createXLinkIn()
     arcface_in_frame.setStreamName("arc_in")
 
+    # Convert model from OMZ to blob
+    if REC_MODEL_NAME is not None:
+        facerec_blob_path = blobconverter.from_zoo(
+            name=REC_MODEL_NAME,
+            shaves=6,
+            zoo_type=REC_ZOO_TYPE
+        )
+
     face_rec_nn = pipeline.createNeuralNetwork()
-    face_rec_nn.setBlobPath("data/face-rec-model/face-recognition-mobilefacenet-arcface_2021.2_4shave.blob")
+    face_rec_nn.setBlobPath(facerec_blob_path)
     # arcface_in_frame.out.link(face_rec_nn.input)
 
     arc_out = pipeline.createXLinkOut()
@@ -80,9 +88,17 @@ def create_depthai_pipeline():
     det_in_frame = pipeline.createXLinkIn()
     det_in_frame.setStreamName("det_in")
 
+    # Convert model from OMZ to blob
+    if DET_MODEL_NAME is not None:
+        facedet_blob_path = blobconverter.from_zoo(
+            name=DET_MODEL_NAME,
+            shaves=6,
+            zoo_type=DET_ZOO_TYPE
+        )
+
     face_det_nn = pipeline.createMobileNetDetectionNetwork()
     face_det_nn.setConfidenceThreshold(0.75)
-    face_det_nn.setBlobPath("data/face-det-model/face-detection-adas-0001.blob")
+    face_det_nn.setBlobPath(facedet_blob_path)
     # det_in_frame.out.link(face_det_nn.input)
 
     det_out = pipeline.createXLinkOut()
@@ -91,7 +107,7 @@ def create_depthai_pipeline():
 
     face_det_manip = pipeline.createImageManip()
     # face_det_manip.initialConfig.setHorizontalFlip(True)
-    face_det_manip.initialConfig.setResize(672, 384)
+    face_det_manip.initialConfig.setResize(DET_INPUT_SIZE[0], DET_INPUT_SIZE[1])
     face_det_manip.initialConfig.setKeepAspectRatio(False)
     # face_det_manip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
 
@@ -165,8 +181,19 @@ def overlay_symbol(frame, img, pos=(65, 100)):
 # MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
 MODEL_INPUT_SIZE = (64, 64)
 # detection_model = load_model(MODEL_FILE, compile=True)
-DET_INPUT_SIZE = (672, 384)
-REC_INPUT_SIZE = (112, 112)
+
+# Define Face Detection model name and input size
+# If you define the blob make sure the DET_MODEL_NAME and DET_ZOO_TYPE are None
+DET_INPUT_SIZE = (300, 300)
+DET_MODEL_NAME = "face-detection-retail-0004"
+DET_ZOO_TYPE = "depthai"
+det_blob_path = None
+
+# Define Face Recognition model name and input size
+# If you define the blob make sure the REC_MODEL_NAME and REC_ZOO_TYPE are None
+REC_MODEL_NAME = "Sphereface"
+REC_ZOO_TYPE = "intel"
+rec_blob_path = None
 
 # def verify_face(depth_frame, bbox):
 #     # Get face roi from right and depth frames
@@ -294,6 +321,7 @@ with dai.Device(pipeline) as device:
 
         # Retrieve 'bgr' (opencv format) frame from gray scale
         frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2BGR)
+        img_h, img_w = frame.shape[0:2]
 
         if frame_count % SKIP_FRAMES == 0:
             # Authenticate the face present in the frame
@@ -315,10 +343,10 @@ with dai.Device(pipeline) as device:
                 if len(detections) is not 0:
                     detection = detections[0]
                     # print(detection.confidence)
-                    x = int(detection.xmin*DET_INPUT_SIZE[0])
-                    y = int(detection.ymin*DET_INPUT_SIZE[1])
-                    w = int(detection.xmax*DET_INPUT_SIZE[0]-detection.xmin*DET_INPUT_SIZE[0])
-                    h = int(detection.ymax*DET_INPUT_SIZE[1]-detection.ymin*DET_INPUT_SIZE[1])
+                    x = int(detection.xmin * img_w)
+                    y = int(detection.ymin * img_h)
+                    w = int(detection.xmax * img_w - detection.xmin * img_w)
+                    h = int(detection.ymax * img_h - detection.ymin * img_h)
                     bbox = (x, y, w, h)
 
         face_embedding = None
