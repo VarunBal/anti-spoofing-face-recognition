@@ -6,10 +6,28 @@ import numpy as np
 import depthai as dai
 import os
 import time
-from keras.models import load_model
-from face_auth import authenticate_face, enroll_face, delist_face, authenticate_emb
+from face_auth import enroll_face, delist_face, authenticate_emb
 import blobconverter
 
+
+# Define Depth Classification model input size
+DEPTH_NN_INPUT_SIZE = (64, 64)
+
+# Define Face Detection model name and input size
+# If you define the blob make sure the DET_MODEL_NAME and DET_ZOO_TYPE are None
+DET_INPUT_SIZE = (300, 300)
+DET_MODEL_NAME = "face-detection-retail-0004"
+DET_ZOO_TYPE = "depthai"
+det_blob_path = None
+
+# Define Face Recognition model name and input size
+# If you define the blob make sure the REC_MODEL_NAME and REC_ZOO_TYPE are None
+REC_MODEL_NAME = "Sphereface"
+REC_ZOO_TYPE = "intel"
+rec_blob_path = None
+
+
+# Create DepthAi pipeline
 def create_depthai_pipeline():
     # Start defining a pipeline
     pipeline = dai.Pipeline()
@@ -23,72 +41,46 @@ def create_depthai_pipeline():
     right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
     right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
-    # Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
+    # Create a node that will produce the depth map
     depth = pipeline.createStereoDepth()
     depth.setConfidenceThreshold(200)
     depth.setOutputRectified(True)  # The rectified streams are horizontally mirrored by default
     depth.setRectifyEdgeFillColor(0)  # Black, to better see the cutout
     depth.setExtendedDisparity(True)  # For better close range depth perception
 
-    # Options: MEDIAN_OFF, KERNEL_3x3, KERNEL_5x5, KERNEL_7x7 (default)
     median = dai.StereoDepthProperties.MedianFilter.KERNEL_7x7  # For depth filtering
     depth.setMedianFilter(median)
 
+    # Linking mono cameras with depth node
     left.out.link(depth.left)
     right.out.link(depth.right)
 
     # Create left output
-    xout_right = pipeline.createXLinkOut()
-    xout_right.setStreamName("right")
-    depth.rectifiedRight.link(xout_right.input)
+    xOutRight = pipeline.createXLinkOut()
+    xOutRight.setStreamName("right")
+    depth.rectifiedRight.link(xOutRight.input)
 
     # Create depth output
-    xout = pipeline.createXLinkOut()
-    xout.setStreamName("disparity")
-    depth.disparity.link(xout.input)
+    xOutDisp = pipeline.createXLinkOut()
+    xOutDisp.setStreamName("disparity")
+    depth.disparity.link(xOutDisp.input)
 
-    xin_frame = pipeline.createXLinkIn()
-    nn_out = pipeline.createXLinkOut()
+    # Create input and output node for Depth Classification
+    xDepthIn = pipeline.createXLinkIn()
+    xDepthIn.setStreamName("depth_in")
+    xOutDepthNn = pipeline.createXLinkOut()
+    xOutDepthNn.setStreamName("depth_nn")
 
-    xin_frame.setStreamName("inFrame")
-    nn_out.setStreamName("nn")
-
-    nn_path = "data/depth-classification-models/depth_classification_ipscaled_model.blob"
-    # Define sources and outputs
-    nn = pipeline.createNeuralNetwork()
-
-    # Properties
-    nn.setBlobPath(nn_path)
-    nn.setNumInferenceThreads(2)
-    nn.input.setBlocking(False)
+    # Define Depth Classification NN node
+    depthNn = pipeline.createNeuralNetwork()
+    depthNn.setBlobPath("data/depth-classification-models/depth_classification_ipscaled_model.blob")
+    depthNn.input.setBlocking(False)
 
     # Linking
-    xin_frame.out.link(nn.input)
-    nn.out.link(nn_out.input)
+    xDepthIn.out.link(depthNn.input)
+    depthNn.out.link(xOutDepthNn.input)
 
-    arcface_in_frame = pipeline.createXLinkIn()
-    arcface_in_frame.setStreamName("arc_in")
-
-    # Convert model from OMZ to blob
-    if REC_MODEL_NAME is not None:
-        facerec_blob_path = blobconverter.from_zoo(
-            name=REC_MODEL_NAME,
-            shaves=6,
-            zoo_type=REC_ZOO_TYPE
-        )
-
-    face_rec_nn = pipeline.createNeuralNetwork()
-    face_rec_nn.setBlobPath(facerec_blob_path)
-    # arcface_in_frame.out.link(face_rec_nn.input)
-
-    arc_out = pipeline.createXLinkOut()
-    arc_out.setStreamName('arc_out')
-    face_rec_nn.out.link(arc_out.input)
-
-    det_in_frame = pipeline.createXLinkIn()
-    det_in_frame.setStreamName("det_in")
-
-    # Convert model from OMZ to blob
+    # Convert detection model from OMZ to blob
     if DET_MODEL_NAME is not None:
         facedet_blob_path = blobconverter.from_zoo(
             name=DET_MODEL_NAME,
@@ -96,50 +88,67 @@ def create_depthai_pipeline():
             zoo_type=DET_ZOO_TYPE
         )
 
-    face_det_nn = pipeline.createMobileNetDetectionNetwork()
-    face_det_nn.setConfidenceThreshold(0.75)
-    face_det_nn.setBlobPath(facedet_blob_path)
-    # det_in_frame.out.link(face_det_nn.input)
+    # Create Face Detection NN node
+    faceDetNn = pipeline.createMobileNetDetectionNetwork()
+    faceDetNn.setConfidenceThreshold(0.75)
+    faceDetNn.setBlobPath(facedet_blob_path)
 
-    det_out = pipeline.createXLinkOut()
-    det_out.setStreamName('det_out')
-    face_det_nn.out.link(det_out.input)
+    # Create ImageManip to convert grayscale mono camera frame to RGB
+    copyManip = pipeline.createImageManip()
+    depth.rectifiedRight.link(copyManip.inputImage)
+    # copyManip.initialConfig.setHorizontalFlip(True)
+    copyManip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
 
-    face_det_manip = pipeline.createImageManip()
-    # face_det_manip.initialConfig.setHorizontalFlip(True)
-    face_det_manip.initialConfig.setResize(DET_INPUT_SIZE[0], DET_INPUT_SIZE[1])
-    face_det_manip.initialConfig.setKeepAspectRatio(False)
-    # face_det_manip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
+    # Create ImageManip to preprocess input frame for detection NN
+    detManip = pipeline.createImageManip()
+    # detManip.initialConfig.setHorizontalFlip(True)
+    detManip.initialConfig.setResize(DET_INPUT_SIZE[0], DET_INPUT_SIZE[1])
+    detManip.initialConfig.setKeepAspectRatio(False)
 
-    # det_in_frame.out.link(face_det_manip.inputImage)
-    # depth.rectifiedRight.link(face_det_manip.inputImage)
-    face_det_manip.out.link(face_det_nn.input)
+    # Linking detection ImageManip to detection NN
+    copyManip.out.link(detManip.inputImage)
+    detManip.out.link(faceDetNn.input)
+
+    # Create output steam for detection output
+    xOutDet = pipeline.createXLinkOut()
+    xOutDet.setStreamName('det_out')
+    faceDetNn.out.link(xOutDet.input)
 
     # Script node will take the output from the face detection NN as an input and set ImageManipConfig
-    # to the 'rec_manip' to crop the initial frame
+    # to crop the initial frame for recognition NN
     script = pipeline.create(dai.node.Script)
     script.setProcessor(dai.ProcessorType.LEON_CSS)
     script.setScriptPath("script.py")
 
-    copy_manip = pipeline.createImageManip()
-    depth.rectifiedRight.link(copy_manip.inputImage)
-    # copy_manip.initialConfig.setHorizontalFlip(True)
-    copy_manip.initialConfig.setFrameType(dai.RawImgFrame.Type.RGB888p)
-    # copy_manip.setNumFramesPool(20)
+    # Set inputs for script node
+    copyManip.out.link(script.inputs['frame'])
+    faceDetNn.out.link(script.inputs['face_det_in'])
 
-    copy_manip.out.link(face_det_manip.inputImage)
-    copy_manip.out.link(script.inputs['frame'])
+    # Convert recognition model from OMZ to blob
+    if REC_MODEL_NAME is not None:
+        facerec_blob_path = blobconverter.from_zoo(
+            name=REC_MODEL_NAME,
+            shaves=6,
+            zoo_type=REC_ZOO_TYPE
+        )
 
-    face_det_nn.out.link(script.inputs['face_det_in'])
-    # We are only interested in timestamp, so we can sync depth frames with NN output
-    # face_det_nn.passthrough.link(script.inputs['face_pass'])
+    # Create Face Recognition NN node
+    faceRecNn = pipeline.createNeuralNetwork()
+    faceRecNn.setBlobPath(facerec_blob_path)
 
-    face_rec_manip = pipeline.createImageManip()
+    # Create ImageManip to preprocess frame for recognition NN
+    recManip = pipeline.createImageManip()
 
-    script.outputs['manip_cfg'].link(face_rec_manip.inputConfig)
-    script.outputs['manip_img'].link(face_rec_manip.inputImage)
+    # Set recognition ImageManipConfig from script node
+    script.outputs['manip_cfg'].link(recManip.inputConfig)
+    script.outputs['manip_img'].link(recManip.inputImage)
 
-    face_rec_manip.out.link(face_rec_nn.input)
+    # Create output steam for recognition output
+    xOutRec = pipeline.createXLinkOut()
+    xOutRec.setStreamName('rec_out')
+    faceRecNn.out.link(xOutRec.input)
+
+    recManip.out.link(faceRecNn.input)
 
     return pipeline
 
@@ -150,6 +159,7 @@ locked_img = cv2.imread(os.path.join('data', 'images', 'lock_grey.png'), -1)
 unlocked_img = cv2.imread(os.path.join('data', 'images', 'lock_open_grey.png'), -1)
 
 
+# Overlay lock/unlock symbol on the frame
 def overlay_symbol(frame, img, pos=(65, 100)):
     """
     This function overlays the image of lock/unlock
@@ -177,48 +187,7 @@ def overlay_symbol(frame, img, pos=(65, 100)):
                                   inv_mask * frame[y1:y2, x1:x2, c])
 
 
-# Initial spoofed classification model
-# MODEL_FILE = "identify-spoof_with_ext.23-1.00.h5"
-MODEL_INPUT_SIZE = (64, 64)
-# detection_model = load_model(MODEL_FILE, compile=True)
-
-# Define Face Detection model name and input size
-# If you define the blob make sure the DET_MODEL_NAME and DET_ZOO_TYPE are None
-DET_INPUT_SIZE = (300, 300)
-DET_MODEL_NAME = "face-detection-retail-0004"
-DET_ZOO_TYPE = "depthai"
-det_blob_path = None
-
-# Define Face Recognition model name and input size
-# If you define the blob make sure the REC_MODEL_NAME and REC_ZOO_TYPE are None
-REC_MODEL_NAME = "Sphereface"
-REC_ZOO_TYPE = "intel"
-rec_blob_path = None
-
-# def verify_face(depth_frame, bbox):
-#     # Get face roi from right and depth frames
-#     face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-#     cv2.imshow("face_roi", face_d)
-#
-#     # Preprocess face depth map for classification
-#     resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
-#     resized_face_d = resized_face_d / 255
-#     resized_face_d = np.expand_dims(resized_face_d, axis=-1)
-#     resized_face_d = np.expand_dims(resized_face_d, axis=0)
-#
-#     # Get prediction
-#     result = detection_model.predict(resized_face_d)
-#     if result[0][0] > .5:
-#         prediction = 'spoofed'
-#         is_real = False
-#     else:
-#         prediction = 'real'
-#         is_real = True
-#     print(prediction)
-#
-#     return is_real
-
-
+# Display info on the frame
 def display_info(frame, bbox, status, status_color, fps):
     # Display bounding box
     cv2.rectangle(frame, bbox, status_color[status], 2)
@@ -246,21 +215,10 @@ def display_info(frame, bbox, status, status_color, fps):
     cv2.putText(frame, 'Press Q to Quit.', (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255))
     cv2.putText(frame, f'FPS: {fps:.2f}', (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255))
 
-
-# Frame count
-frame_count = 0
-
-# Placeholder fps value
-fps = 0
-
-# Set the number of frames to skip for authentication
-SKIP_FRAMES = 10
-
-# Used to record the time when we processed last frames
-prev_frame_time = 0
-
-# Used to record the time at which we processed current frames
-new_frame_time = 0
+frame_count = 0  # Frame count
+fps = 0  # Placeholder fps value
+prev_frame_time = 0  # Used to record the time when we processed last frames
+new_frame_time = 0  # Used to record the time at which we processed current frames
 
 # Set status colors
 status_color = {
@@ -270,84 +228,74 @@ status_color = {
     'No Face Detected': (0, 0, 255)
 }
 
+# Create Pipeline
 pipeline = create_depthai_pipeline()
 
-# Pipeline defined, now the device is connected to
+# Initialize device and start Pipeline
 with dai.Device(pipeline) as device:
     # Start pipeline
     device.startPipeline()
 
-    # Output queue will be used to get the right camera frames from the outputs defined above
-    q_right = device.getOutputQueue(name="right", maxSize=4, blocking=False)
+    # Output queue to get the right camera frames
+    qRight = device.getOutputQueue(name="right", maxSize=4, blocking=False)
 
-    # Output queue will be used to get the disparity frames from the outputs defined above
-    q_depth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
+    # Output queue to get the disparity map
+    qDepth = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
 
-    # Input queue will be used to send video frames to the device.
-    q_in = device.getInputQueue(name="inFrame")
+    # Input queue to send face depth map to the device
+    qDepthIn = device.getInputQueue(name="depth_in")
 
-    # Output queue will be used to get nn data from the video frames.
-    q_clas = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
+    # Output queue to get Depth Classification nn data
+    qDepthNn = device.getOutputQueue(name="depth_nn", maxSize=4, blocking=False)
 
-    # Input queue will be used to send video frames to the device.
-    # q_arc_in = device.getInputQueue(name="arc_in")
+    # Output queue to get Face Recognition nn data
+    qRec = device.getOutputQueue(name="rec_out", maxSize=4, blocking=False)
 
-    # Output queue will be used to get nn data from the video frames.
-    q_rec = device.getOutputQueue(name="arc_out", maxSize=4, blocking=False)
-
-    # Input queue will be used to send video frames to the device.
-    # q_det_in = device.getInputQueue(name="det_in")
-
-    # Output queue will be used to get nn data from the video frames.
-    q_det = device.getOutputQueue(name="det_out", maxSize=4, blocking=False)
+    # Output queue to get Face Detection nn data
+    qDet = device.getOutputQueue(name="det_out", maxSize=4, blocking=False)
 
     while True:
         # Get right camera frame
-        in_right = q_right.get()
-        r_frame = in_right.getFrame()
+        inRight = qRight.get()
+        r_frame = inRight.getFrame()
         # r_frame = cv2.flip(r_frame, flipCode=1)
 
         # Get depth frame
-        in_depth = q_depth.get()  # blocking call, will wait until a new data has arrived
-        depth_frame = in_depth.getFrame()
+        inDepth = qDepth.get()  # blocking call, will wait until a new data has arrived
+        depth_frame = inDepth.getFrame()
         depth_frame = cv2.flip(depth_frame, flipCode=1)
         depth_frame = np.ascontiguousarray(depth_frame)
         depth_frame = cv2.bitwise_not(depth_frame)
 
-        # frame is transformed, the color map will be applied to highlight the depth info
+        # Apply color map to highlight the disparity info
         depth_frame_cmap = cv2.applyColorMap(depth_frame, cv2.COLORMAP_JET)
-        # frame is ready to be shown
+        # Show disparity frame
         cv2.imshow("disparity", depth_frame_cmap)
 
-        # Retrieve 'bgr' (opencv format) frame from gray scale
+        # Convert grayscale image frame to 'bgr' (opencv format)
         frame = cv2.cvtColor(r_frame, cv2.COLOR_GRAY2BGR)
+
+        # Get image frame dimensions
         img_h, img_w = frame.shape[0:2]
 
-        if frame_count % SKIP_FRAMES == 0:
-            # Authenticate the face present in the frame
-            # _, bbox = authenticate_face(frame)
-            bbox = None
+        bbox = None
 
-            # resized_frame = cv2.resize(frame, DET_INPUT_SIZE).transpose(2, 0, 1)
-            #
-            # frame_img = dai.ImgFrame()
-            # frame_img.setFrame(resized_frame)
-            # frame_img.setWidth(DET_INPUT_SIZE[0])
-            # frame_img.setHeight(DET_INPUT_SIZE[1])
+        # Get detection NN output
+        inDet = qDet.tryGet()
 
-            # q_det_in.send(frame_img)
-            inDet = q_det.tryGet()
-            if inDet is not None:
-                detections = inDet.detections
-                # for detection in detections:
-                if len(detections) is not 0:
-                    detection = detections[0]
-                    # print(detection.confidence)
-                    x = int(detection.xmin * img_w)
-                    y = int(detection.ymin * img_h)
-                    w = int(detection.xmax * img_w - detection.xmin * img_w)
-                    h = int(detection.ymax * img_h - detection.ymin * img_h)
-                    bbox = (x, y, w, h)
+        if inDet is not None:
+            # Get face bbox detections
+            detections = inDet.detections
+
+            if len(detections) is not 0:
+                # Use first detected face bbox
+                detection = detections[0]
+                # print(detection.confidence)
+                x = int(detection.xmin * img_w)
+                y = int(detection.ymin * img_h)
+                w = int(detection.xmax * img_w - detection.xmin * img_w)
+                h = int(detection.ymax * img_h - detection.ymin * img_h)
+                bbox = (x, y, w, h)
 
         face_embedding = None
         authenticated = False
@@ -355,46 +303,32 @@ with dai.Device(pipeline) as device:
         # Check if a face was detected in the frame
         if bbox:
 
-            # face = frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
-            # # Preprocess face for rec
-            # resized_face = cv2.resize(face, REC_INPUT_SIZE)
-            # face_img = dai.ImgFrame()
-            # face_img.setFrame(resized_face)
-            # face_img.setWidth(REC_INPUT_SIZE[0])
-            # face_img.setHeight(REC_INPUT_SIZE[1])
-
-            # q_arc_in.send(face_img)
-            inRec = q_rec.tryGet()
-            if inRec is not None:
-                face_embedding = inRec.getFirstLayerFp16()
-                # print(len(face_embedding))
-                authenticated = authenticate_emb(face_embedding)
-
-            # Check if face is real or spoofed
-            # Get face roi from right and depth frames
+            # Get face roi depth frame
             face_d = depth_frame[max(0, bbox[1]):bbox[1] + bbox[3], max(0, bbox[0]):bbox[0] + bbox[2]]
             cv2.imshow("face_roi", face_d)
 
             # Preprocess face depth map for classification
-            resized_face_d = cv2.resize(face_d, MODEL_INPUT_SIZE)
-            # resized_face_d = resized_face_d / 255
+            resized_face_d = cv2.resize(face_d, DEPTH_NN_INPUT_SIZE)
             resized_face_d = resized_face_d.astype('float16')
 
+            # Create Depthai Imageframe
             img = dai.ImgFrame()
             img.setFrame(resized_face_d)
-            img.setWidth(MODEL_INPUT_SIZE[0])
-            img.setHeight(MODEL_INPUT_SIZE[1])
+            img.setWidth(DEPTH_NN_INPUT_SIZE[0])
+            img.setHeight(DEPTH_NN_INPUT_SIZE[1])
             img.setType(dai.ImgFrame.Type.GRAYF16)
 
-            q_in.send(img)
+            # Send face depth map to depthai pipeline for classification
+            qDepthIn.send(img)
 
-            inClas = q_clas.tryGet()
+            # Get Depth Classification NN output
+            inDepthNn = qDepthNn.tryGet()
 
             is_real = None
-            if inClas is not None:
-                # Get prediction
 
-                cnn_output = inClas.getLayerFp16("dense_2/Sigmoid")
+            if inDepthNn is not None:
+                # Get prediction
+                cnn_output = inDepthNn.getLayerFp16("dense_2/Sigmoid")
                 # print(cnn_output)
                 if cnn_output[0] > .5:
                     prediction = 'spoofed'
@@ -404,10 +338,18 @@ with dai.Device(pipeline) as device:
                     is_real = True
                 print(prediction)
 
-            # is_real = verify_face(depth_frame, bbox)
-
             if is_real:
                 # Check if the face in the frame was authenticated
+
+                # Get recognition NN output
+                inRec = qRec.tryGet()
+                if inRec is not None:
+                    # Get embedding of the face
+                    face_embedding = inRec.getFirstLayerFp16()
+                    # print(len(face_embedding))
+
+                    authenticated = authenticate_emb(face_embedding)
+
                 if authenticated:
                     # Authenticated
                     status = 'Authenticated'
@@ -425,12 +367,12 @@ with dai.Device(pipeline) as device:
         display_info(frame, bbox, status, status_color, fps)
 
         # Calculate average fps
-        if frame_count % SKIP_FRAMES == 0:
-            # Time when we finish processing last 100 frames
+        if frame_count % 10 == 0:
+            # Time when we finish processing last 10 frames
             new_frame_time = time.time()
 
             # Fps will be number of frame processed in one second
-            fps = 1 / ((new_frame_time - prev_frame_time)/SKIP_FRAMES)
+            fps = 1 / ((new_frame_time - prev_frame_time)/10)
             prev_frame_time = new_frame_time
 
         # Capture the key pressed
@@ -454,4 +396,5 @@ with dai.Device(pipeline) as device:
         # Increment frame count
         frame_count += 1
 
+# Close all output windows
 cv2.destroyAllWindows()
