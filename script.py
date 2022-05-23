@@ -31,7 +31,7 @@ while True:
             # Set config parameters
             cfg = ImageManipConfig()
             cfg.setCropRect(det.xmin, det.ymin, det.xmax, det.ymax)
-            cfg.setResize(112, 96)  # Input size of Face Rec model
+            cfg.setResize(96, 112)  # Input size of Face Rec model
             cfg.setKeepAspectRatio(False)
 
             # Output image and config
